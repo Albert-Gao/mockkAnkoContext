@@ -1,13 +1,13 @@
 package xyz.akbertgao.mockkankocontext
 
-import io.mockk.every
-import io.mockk.mockk
-import io.mockk.spyk
-import io.mockk.verifySequence
+import android.os.Handler
+import io.mockk.*
+import kotlinx.coroutines.experimental.android.HandlerContext
+import kotlinx.coroutines.experimental.android.UI
+import kotlinx.coroutines.experimental.runBlocking
 import org.junit.Test
-import kotlin.test.*
 
-import org.junit.Assert.*
+import java.util.concurrent.ForkJoinPool
 
 /**
  * Example local unit test, which will execute on the development machine (host).
@@ -15,20 +15,35 @@ import org.junit.Assert.*
  * See [testing documentation](http://d.android.com/tools/testing).
  */
 class ExampleUnitTest {
-    private val mockWebService:FakeWebService = mockk(relaxed = true)
-    private val fakeViewModel:FakeViewModel = spyk(FakeViewModel(mockWebService))
+    private val mockWebService: FakeWebService = mockk(relaxed = true)
+    private val fakeViewModel: FakeViewModel = spyk(FakeViewModel(mockWebService), recordPrivateCalls = true)
+
+    private val handlerCtxKt = staticMockk("kotlinx.coroutines.experimental.android.HandlerContextKt")
 
     @Test
     fun methodCall_should_happen_in_order() {
-        every {
-            mockWebService.getResult()
-        } returns "albert"
+        handlerCtxKt.use {
+            every {
+                mockWebService.getResult()
+            } returns "albert"
 
-        fakeViewModel.tryAsync()
+            val handler = mockk<Handler>()
+            every { handler.post(any()) } answers {
+                ForkJoinPool.commonPool().submit(firstArg<Runnable>())
+                true
+            }
+            every { UI } returns HandlerContext(handler)
 
-        verifySequence {
-            mockWebService.getResult()
-            fakeViewModel invoke "checkResult" withArguments listOf("albert")
+            runBlocking {
+                fakeViewModel.tryAsync().join()
+            }
+
+            verifySequence {
+                fakeViewModel.tryAsync()
+                mockWebService.getResult()
+                fakeViewModel invoke "checkResult" withArguments listOf("albert")
+            }
         }
     }
 }
+
